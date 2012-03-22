@@ -1,0 +1,5 @@
+1332382037
+1331870454000962745
+           46658586
+
+difference can be about 0.05 seconds sometimes. kind of substantial

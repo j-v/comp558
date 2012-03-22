@@ -1,0 +1,22 @@
+<package>
+  <description brief="optical_flow">
+
+     optical_flow
+
+  </description>
+  <author></author>
+  <license>BSD</license>
+  <review status="unreviewed" notes=""/>
+  <url>http://ros.org/wiki/optical_flow</url>
+ 	<depend package="sensor_msgs"/>
+	<depend package="visualization_msgs"/>
+	<!--<depend package="opencv2"/>-->
+	<depend package="cv_bridge"/>
+  	<depend package="rospy"/>
+	<depend package="std_msgs"/>
+	<depend package="rosbag"/>
+
+	<rosdep name="opencv2.3"/>
+</package>
+
+

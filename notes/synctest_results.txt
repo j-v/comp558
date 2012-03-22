@@ -1,0 +1,12 @@
+jvolkm@open-14:~/ros_workspace/cvtest/nodes$ rosrun cvtest synctest.py 
+Reading data from /media/058e56e8-baba-338d-805f-16c587700d1b/stuff/2012-03-16-00-00-12.bag
+RGB Image on topic: /camera/rgb/image_color
+Depth Image on topic: /camera/depth/image
+Reading...
+Duration of /media/058e56e8-baba-338d-805f-16c587700d1b/stuff/2012-03-16-00-00-12.bag: 41.715649732 seconds
+RGB 953 + Depth 55 = TOTAL 1008 frames read
+Recorded RGB framerate: 24.7416315527 FPS 
+Recorded depth framerate: 1.32591599341 FPS
+Average sync difference 0.0224930553273 sec
+maximum diff: 0.061182704 sec 
+minimum diff: 0.002023162 sec
