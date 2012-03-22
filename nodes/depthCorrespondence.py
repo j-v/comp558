@@ -41,6 +41,15 @@ def getDepthChanges(Dold, Dnew, X, Y):
    
    return Z
 
+def avg_masking_nan(M):
+   mask = cv.CreateMat(M.rows, M.cols, cv.CV_8U)
+   for i in range(M.rows):
+      for j in range(M.cols):
+	 if not math.isnan(M[i,j]): mask[i,j] = 1
+	 else: mask[i,j] = 0
+
+   mean = cv.Avg(M, mask)[0] # index at Zero, b/c cv.Avg returns a 4-tuple for some reason
+   return mean
 
 class DepthChangeEstimator:
 
@@ -60,7 +69,6 @@ class DepthChangeEstimator:
       self.velY = cv.CreateMat(480,640, cv.CV_32FC1)
 
    def rgb_callback(self, img_message):
-      print 'rgb'
       rospy.loginfo('Received rgb image')
       #import pdb; pdb.set_trace()
       # convert to openCV format
@@ -86,7 +94,8 @@ class DepthChangeEstimator:
 	 if self.lastDepthImage != None and self.velX != None and self.velY != None:
 	    # do the depth change estimate
 	    dZ = getDepthChanges(self.lastDepthImage, depth_img, self.velX, self.velY)
-	    # publish rviz arrow visualization messages
+	    #import pdb; pdb.set_trace()
+	    # TODO publish rviz arrow visualization messages
 
 	 self.lastDepthImage = depth_img
       except CvBridgeError, e:

@@ -14,6 +14,7 @@ def avg_masking_nan(M):
 	 else: mask[i,j] = 0
 
    mean = cv.Avg(M, mask)[0] # index at Zero, b/c cv.Avg returns a 4-tuple for some reason
+   return mean
 
 filename = '/media/JANGLES/2012-03-16-00-00-12.bag'
 
