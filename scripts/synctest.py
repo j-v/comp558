@@ -23,6 +23,7 @@ def receive_data(filename) :
    print "Depth Image on topic: " + depth_topic
 
    lastImgTime = -1 
+   lastDepthTime = -1
 
    rgb_start = 0
    depth_start = 0
