@@ -15,7 +15,7 @@ from IPython.Debugger import Tracer; debug_here = Tracer()
 from tf.transformations import quaternion_from_euler
 
 '''
-THIS IS NOT FOR REAL TIME. NEED A SPECIALLY PROCESSED BAG FILE
+THIS IS NOT FOR TIME, AND ASSUMES A SPECIALLY PROCESSED BAG FILE
 '''
 class VelEstimator3d:
    def __init__(self, bag_filename, topics, msg_range=None):
@@ -30,7 +30,6 @@ class VelEstimator3d:
       self.marker_pub = rospy.Publisher('/depth_change_marker_array', MarkerArray)
       self.pointcloud_pub = rospy.Publisher('/point_cloud', PointCloud2)
       cv.NamedWindow('flow')
-      self.msg_tuple_list = [] # keep track of all messages -- probably a bad thing to do as it would keep like a gig of shit in RAM
       self.flow_2d_history = [] # smoothed
       self.vel_3d_history =[]
 
@@ -57,15 +56,10 @@ class VelEstimator3d:
 	       else: count += 1
 	       print 'got message tuple', count
 	       msg_tuple = (depth_msg, rgb_msg, points_msg) = tuple(triple)
-	       #import pdb; pdb.set_trace()
-	       # publish pointcloud message
-	       #self.pointcloud_pub.publish(points_msg)
-	       #TODO make sure we have right format of messages?
-
-	       # 1. Do optical flow estimate, get flowX & flowY
 	       mono_image = self.cv_bridge.imgmsg_to_cv(rgb_msg, "mono8")
 	       if self.last_mono_image != None:
 		  print 'calculating optical flow'
+	          # 1. Do optical flow estimate, get flowX & flowY
 		  cv.CalcOpticalFlowLK(self.last_mono_image, mono_image, self.flow_window_size,
 			flowX, flowY)
 
@@ -74,8 +68,6 @@ class VelEstimator3d:
 		  print 'smoothing 2d optical flow'
 		  flow_smoothed = (flowX_smoothed, flowY_smoothed) = self.smooth_flow(flowX, flowY, self.region_size)
 		  self.flow_2d_history.append( flow_smoothed )
-		  print 'displaying 2d optical flow'
-		  #self.draw_flow_2d(flowX_smoothed, flowY_smoothed, mono_image, 10.)
 
 		  # 3. Do 3d velocity estimate given the 2d estimates and pointcloud messages
 		  print 'estimating 3d velocities'
@@ -83,8 +75,6 @@ class VelEstimator3d:
 		  print 'smoothing 3d velocity estimate'
 		  vel_smoothed = points, velocities = self.smooth_3d_vel(pixel_vels, points_msg, self.region_size)
 		  self.vel_3d_history.append( vel_smoothed )
-		  #print 'displaying 3d velocity estimate'
-		  #self.plot_3d_vel(points, velocities, 1.0)
 
 
 	       self.last_mono_image = mono_image
@@ -94,14 +84,8 @@ class VelEstimator3d:
 
 	       triple = []
 
-	       # wait til user presses Enter to go to next frame
-	       #debug_here()
-	       #raw_input("Press ENTER to proceed to next frame")
 
-
-
-
-
+   ''' visualize the 2d and 3d velocity field estimates '''
    def visualize_preprocessed(self, msg_range=None):
       count = -1
       with rosbag.Bag(self.bag_filename) as bag:
@@ -157,12 +141,6 @@ class VelEstimator3d:
 	 marker.color.r = 1.0
 	 marker.color.g = 0.0
 	 marker.color.b = 0.0
-	 # sum randumb orientation numberazz
-	 # TODO do calculations to get quaternion coords for orientation
-	 # q = quaternion_from_euler(yaw, pitch, roll=0)
-	 # in our coord system (XZ plane) its actually pitch, yaw, roll
-	 # test
-	 #(w,x,y,z) = quaternion_from_euler(math.pi/4,0.1,math.pi/4)
 	 pitch = math.atan2(v[1], math.sqrt(v[0]*v[0]+v[2]*v[2]))
 	 yaw = math.atan2(v[0],v[2])
 	 (w,x,y,z) = quaternion_from_euler(pitch,yaw,0)
@@ -312,6 +290,7 @@ def main(args):
    bag_filename = args[1]
    msg_range = (0,6)
    VelEstimator3d(bag_filename, topics, msg_range)
+   rospy.spin()
    cv.DestroyAllWindows()
 
 if __name__ == '__main__':
