@@ -8,9 +8,11 @@ USAGE: roslaunch comp558 depth2pointcloud_bag.launch in:=IN_BAG_FILENAME out=OUT
 
   <node pkg="nodelet" type="nodelet" name="depth2points"
         args="load depth_image_proc/point_cloud_xyz nodelet_mgr">
+    <remap to="/camera/depth/camera_info" from="/camera_info"/>
   </node>
 
   <!--<node name="depth2points_node" 
-        pkg="comp558" type="depth2pointcloud_bag.py" args="$(arg in) $(arg out)"/>-->
+        pkg="comp558" type="depth2pointcloud_bag.py" args="$(arg in) $(arg out)">
+  </node>-->
 
 </launch>

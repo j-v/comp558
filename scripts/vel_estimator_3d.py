@@ -8,18 +8,22 @@ from visualization_msgs.msg import Marker, MarkerArray
 import cv
 import math
 import sys
-from comp558 import point_cloud
+from comp558 import point_cloud, flowlogger
 from itertools import izip
 import numpy as np
 from IPython.Debugger import Tracer; debug_here = Tracer()
 from tf.transformations import quaternion_from_euler
+from time import time
 
 '''
-THIS IS NOT FOR TIME, AND ASSUMES A SPECIALLY PROCESSED BAG FILE
+THIS IS NOT FOR REALTIME, AND ASSUMES A SPECIALLY PROCESSED BAG FILE
 '''
 class VelEstimator3d:
-   def __init__(self, bag_filename, topics, msg_range=None):
+   def __init__(self, bag_filename, topics, msg_range=None, log_filename=None):
       self.bag_filename = bag_filename
+      self.log_filename = log_filename
+      if self.log_filename == None: self.log_filename = bag_filename
+
       self.topics = topics
       rospy.init_node('vel_3d')
       self.last_mono_image = None
@@ -33,6 +37,8 @@ class VelEstimator3d:
       self.flow_2d_history = [] # smoothed
       self.vel_3d_history =[]
 
+      self.flow_logger = flowlogger.Flow2dLogger(self.log_filename + '.flow2d','w')
+      self.vel_logger = flowlogger.Vel3dLogger(self.log_filename + '.vel3d','w')
       self.do_flow_estimate(msg_range)
       while raw_input("visualize data?").lower() == 'y':
          self.visualize_preprocessed(msg_range)
@@ -49,6 +55,7 @@ class VelEstimator3d:
 	    # get triple of (depth, rgb, points) messages
 	    triple.append(msg)
 	    if len(triple) == 3:
+	       stamp = msg.header.stamp.to_nsec()
 	       if msg_range != None: 
 		  if count >= msg_range[1]: break
 		  count += 1
@@ -69,25 +76,35 @@ class VelEstimator3d:
 		  flow_smoothed = (flowX_smoothed, flowY_smoothed) = self.smooth_flow(flowX, flowY, self.region_size)
 		  self.flow_2d_history.append( flow_smoothed )
 
+		  # logging
+		  flowpoints = []
+		  flowvels = []
+		  for i in xrange(flowX_smoothed.shape[0]):
+		     for j in xrange(flowY_smoothed.shape[1]):
+			flowpoints.append( (j*self.region_size, i*self.region_size) )
+			flowvels.append( (flowX_smoothed[i,j],flowY_smoothed[i,j]) )
+	          self.flow_logger.write(stamp,flowpoints,flowvels)
+
 		  # 3. Do 3d velocity estimate given the 2d estimates and pointcloud messages
 		  print 'estimating 3d velocities'
 		  pixel_vels = self.estimate_3d_vel(flowX, flowY, self.last_points_msg, points_msg)
 		  print 'smoothing 3d velocity estimate'
 		  vel_smoothed = points, velocities = self.smooth_3d_vel(pixel_vels, points_msg, self.region_size)
 		  self.vel_3d_history.append( vel_smoothed )
+		  self.vel_logger.write(stamp,points,velocities)
 
 
 	       self.last_mono_image = mono_image
 	       self.last_points_msg = points_msg
 	       
-
-
 	       triple = []
 
 
    ''' visualize the 2d and 3d velocity field estimates '''
    def visualize_preprocessed(self, msg_range=None):
       count = -1
+      flowlog = flowlogger.Flow2dLogger(self.log_filename + '.flow2d')
+      vellog = flowlogger.Vel3dLogger(self.log_filename + '.vel3d')
       with rosbag.Bag(self.bag_filename) as bag:
 	 triple = []
 	 for topic, msg, t in bag.read_messages(topics=self.topics):
@@ -109,10 +126,15 @@ class VelEstimator3d:
 	       msg_tuple = (depth_msg, rgb_msg, points_msg) = tuple(triple)
 	       mono_image = self.cv_bridge.imgmsg_to_cv(rgb_msg, "mono8")
 	       self.pointcloud_pub.publish(points_msg)
-	       flow_x, flow_y = self.flow_2d_history[count-1]
-	       points, vels = self.vel_3d_history[count-1]
-	       self.draw_flow_2d(flow_x, flow_y, mono_image, 10.)
+	       # flow_x, flow_y = self.flow_2d_history[count-1]
+	       # points, vels = self.vel_3d_history[count-1]
+	       # self.draw_flow_2d(flow_x, flow_y, mono_image, 10.)
+	       # self.plot_3d_vel(points, vels, 1.)
+	       (t, points, vels) = vellog.read()
 	       self.plot_3d_vel(points, vels, 1.)
+	       (t, points, vels) = flowlog.read()
+	       self.draw_flow_2d_2(points,vels,mono_image,10)
+
 	       cv.WaitKey(3) # will this help?
 	       raw_input("press ENTER")
 	       triple = []
@@ -126,7 +148,7 @@ class VelEstimator3d:
 
       marker_array = MarkerArray()
 
-      for i in xrange(p_arr.size):
+      for i in xrange(len(p_arr)):
 	 #debug_here()
 	 p = p_arr[i]
 	 v = vx,vy,vz = v_arr[i]
@@ -162,10 +184,12 @@ class VelEstimator3d:
       
    def smooth_3d_vel(self, pixel_vels, pointcloud_message, region_size):
       rows, cols = pixel_vels.shape 
-      s_rows, s_cols = rows/region_size,cols/region_size
       points = [pt for pt in point_cloud.read_points(pointcloud_message)]
-      result_points = np.zeros(s_rows*s_cols, dtype=('f4,f4,f4'))
-      velocities = np.zeros(s_rows*s_cols, dtype=('f4,f4,f4'))
+      s_rows, s_cols = rows/region_size,cols/region_size
+      #result_points = np.zeros(s_rows*s_cols, dtype=('f4,f4,f4'))
+      #velocities = np.zeros(s_rows*s_cols, dtype=('f4,f4,f4'))
+      result_points = []
+      velocities = []
 
       isnan = math.isnan
       point_index = 0
@@ -186,16 +210,21 @@ class VelEstimator3d:
 		        v_accum += v
 			v_count += 1
 	    if not (v_count > 0): v_count = 1. # prevent division by zero
-	    result_points[point_index] = tuple(p_accum / v_count)
-	    velocities[point_index] = tuple(v_accum / v_count)
-	    point_index += 1
+	    #result_points[point_index] = tuple(p_accum / v_count)
+	    #velocities[point_index] = tuple(v_accum / v_count)
+	    #point_index += 1
+	    result_points.append(tuple(p_accum/v_count))
+	    velocities.append(tuple(v_accum/v_count))
 
       return result_points, velocities
       
 
    def estimate_3d_vel(self, flowX, flowY, last_points_msg, points_msg):
       rows, cols = flowX.rows, flowX.cols
+      stime = time()
       last_points = [pt for pt in point_cloud.read_points(last_points_msg)]
+      elapsed = time()-stime
+      print 'point cloud iteration: ', elapsed, 'sec'
       points = [pt for pt in point_cloud.read_points(points_msg)]
 
       pixel_vels_3d = np.empty([rows,cols],dtype=('f4,f4,f4'))
@@ -274,12 +303,21 @@ class VelEstimator3d:
       cv.ShowImage('flow', flow_image)
       cv.WaitKey(3)
 
+   def draw_flow_2d_2(self, points, vels, mono_image, scale=1):
+      flow_image = cv.CreateMat(mono_image.rows, mono_image.cols, cv.CV_8UC3)
+      cv.CvtColor(mono_image, flow_image, cv.CV_GRAY2BGR)
 
+      for (pt, vel) in zip(points, vels):
+	 (x, y)=pt
+	 (vx, vy)=vel
+	 arr_x = int(x+vx*scale)
+	 arr_y = int(y+vy*scale)
+	 arr_x = max(min(arr_x, sys.maxint), -sys.maxint)
+	 arr_y = max(min(arr_y, sys.maxint), -sys.maxint)
+	 cv.Line(flow_image, (x,y), (arr_x, arr_y), (0,0,255))
 
-      
-      pass
-
-
+      cv.ShowImage('flow', flow_image)
+      cv.WaitKey(3)
 
 def main(args):
    topics = [ #we expect topics in this order
@@ -288,7 +326,8 @@ def main(args):
       '/camera/depth/points'
       ]
    bag_filename = args[1]
-   msg_range = (0,6)
+   #msg_range = (0,6)
+   msg_range = None
    VelEstimator3d(bag_filename, topics, msg_range)
    rospy.spin()
    cv.DestroyAllWindows()
