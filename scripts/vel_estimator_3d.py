@@ -15,10 +15,10 @@ from IPython.Debugger import Tracer; debug_here = Tracer()
 from tf.transformations import quaternion_from_euler
 
 '''
-THIS IS NOT FOR REAL TIME. NEED A SPECIALLY PROCESSED BAG FILE
+THIS IS NOT FOR TIME, AND ASSUMES A SPECIALLY PROCESSED BAG FILE
 '''
 class VelEstimator3d:
-   def __init__(self, bag_filename, topics):
+   def __init__(self, bag_filename, topics, msg_range=None):
       self.bag_filename = bag_filename
       self.topics = topics
       rospy.init_node('vel_3d')
@@ -30,67 +30,97 @@ class VelEstimator3d:
       self.marker_pub = rospy.Publisher('/depth_change_marker_array', MarkerArray)
       self.pointcloud_pub = rospy.Publisher('/point_cloud', PointCloud2)
       cv.NamedWindow('flow')
+      self.flow_2d_history = [] # smoothed
+      self.vel_3d_history =[]
 
-      self.do_flow_estimate()
+      self.do_flow_estimate(msg_range)
+      while raw_input("visualize data?").lower() == 'y':
+         self.visualize_preprocessed(msg_range)
       
 
    """ THE MAIN METHOD """
-   def do_flow_estimate(self):
+   def do_flow_estimate(self, msg_range=None):
+      flowX = cv.CreateMat(480,640, cv.CV_32FC1)
+      flowY = cv.CreateMat(480,640, cv.CV_32FC1)
+      with rosbag.Bag(self.bag_filename) as bag:
+	 triple = []
+	 count = 0
+	 for topic, msg, t in bag.read_messages(topics=self.topics):
+	    # get triple of (depth, rgb, points) messages
+	    triple.append(msg)
+	    if len(triple) == 3:
+	       if msg_range != None: 
+		  if count >= msg_range[1]: break
+		  count += 1
+		  if count < msg_range[0]: continue
+	       else: count += 1
+	       print 'got message tuple', count
+	       msg_tuple = (depth_msg, rgb_msg, points_msg) = tuple(triple)
+	       mono_image = self.cv_bridge.imgmsg_to_cv(rgb_msg, "mono8")
+	       if self.last_mono_image != None:
+		  print 'calculating optical flow'
+	          # 1. Do optical flow estimate, get flowX & flowY
+		  cv.CalcOpticalFlowLK(self.last_mono_image, mono_image, self.flow_window_size,
+			flowX, flowY)
 
-      #try:
-         flowX = cv.CreateMat(480,640, cv.CV_32FC1)
-	 flowY = cv.CreateMat(480,640, cv.CV_32FC1)
-	 with rosbag.Bag(self.bag_filename) as bag:
-	    triple = []
-	    for topic, msg, t in bag.read_messages(topics=self.topics):
-	       # get triple of (depth, rgb, points) messages
-	       triple.append(msg)
-	       if len(triple) == 3:
-		  print 'got message tuple'
-		  (depth_msg, rgb_msg, points_msg) = tuple(triple)
-	          #import pdb; pdb.set_trace()
-		  # publish pointcloud message
-		  self.pointcloud_pub.publish(points_msg)
-		  #TODO make sure we have right format of messages?
+		  # 2. Smooth over optical flow (grid regions in 2D image), 
+		  # get flowX_smoothed & flowY_smoothed
+		  print 'smoothing 2d optical flow'
+		  flow_smoothed = (flowX_smoothed, flowY_smoothed) = self.smooth_flow(flowX, flowY, self.region_size)
+		  self.flow_2d_history.append( flow_smoothed )
 
-		  # 1. Do optical flow estimate, get flowX & flowY
-		  mono_image = self.cv_bridge.imgmsg_to_cv(rgb_msg, "mono8")
-		  if self.last_mono_image != None:
-		     print 'calculating optical flow'
-		     cv.CalcOpticalFlowLK(self.last_mono_image, mono_image, self.flow_window_size,
-			   flowX, flowY)
-
-		     # 2. Smooth over optical flow (grid regions in 2D image), 
-		     # get flowX_smoothed & flowY_smoothed
-		     print 'smoothing 2d optical flow'
-		     (flowX_smoothed, flowY_smoothed) = self.smooth_flow(flowX, flowY, self.region_size)
-		     print 'displaying 2d optical flow'
-		     self.draw_flow_2d(flowX_smoothed, flowY_smoothed, mono_image, 10.)
-
-		     # 3. Do 3d velocity estimate given the 2d estimates and pointcloud messages
-		     print 'estimating 3d velocities'
-		     pixel_vels = self.estimate_3d_vel(flowX, flowY, self.last_points_msg, points_msg)
-		     print 'smoothing 3d velocity estimate'
-		     points, velocities = self.smooth_3d_vel(pixel_vels, points_msg, self.region_size)
-		     print 'displaying 3d velocity estimate'
-		     self.plot_3d_vel(points, velocities, 1.0)
+		  # 3. Do 3d velocity estimate given the 2d estimates and pointcloud messages
+		  print 'estimating 3d velocities'
+		  pixel_vels = self.estimate_3d_vel(flowX, flowY, self.last_points_msg, points_msg)
+		  print 'smoothing 3d velocity estimate'
+		  vel_smoothed = points, velocities = self.smooth_3d_vel(pixel_vels, points_msg, self.region_size)
+		  self.vel_3d_history.append( vel_smoothed )
 
 
-		  self.last_mono_image = mono_image
-		  self.last_points_msg = points_msg
-		  
+	       self.last_mono_image = mono_image
+	       self.last_points_msg = points_msg
+	       
 
 
+	       triple = []
+
+
+   ''' visualize the 2d and 3d velocity field estimates '''
+   def visualize_preprocessed(self, msg_range=None):
+      count = -1
+      with rosbag.Bag(self.bag_filename) as bag:
+	 triple = []
+	 for topic, msg, t in bag.read_messages(topics=self.topics):
+	    triple.append(msg)
+	    if len(triple) == 3:
+               if msg_range != None: 
+		  if count >= msg_range[1]-1: break
+		  count += 1
+		  if count < msg_range[0]: 
+		     triple = []
+		     continue
+	       else: count += 1
+	       print 'got message tuple', count
+
+	       # ignore first triple
+	       if count == 1: 
 		  triple = []
+		  continue
+	       msg_tuple = (depth_msg, rgb_msg, points_msg) = tuple(triple)
+	       mono_image = self.cv_bridge.imgmsg_to_cv(rgb_msg, "mono8")
+	       self.pointcloud_pub.publish(points_msg)
+	       flow_x, flow_y = self.flow_2d_history[count-1]
+	       points, vels = self.vel_3d_history[count-1]
+	       self.draw_flow_2d(flow_x, flow_y, mono_image, 10.)
+	       self.plot_3d_vel(points, vels, 1.)
+	       cv.WaitKey(3) # will this help?
+	       raw_input("press ENTER")
+	       triple = []
 
-		  # wait til user presses Enter to go to next frame
-		  #debug_here()
-		  raw_input("Press ENTER to proceed to next frame")
-     # except Exception, e:
-#	 print e
-
-
-
+	 print "End of data"
+	       
+	       
+	       
 
    def plot_3d_vel(self, p_arr, v_arr, v_scale=1.0):
 
@@ -111,12 +141,6 @@ class VelEstimator3d:
 	 marker.color.r = 1.0
 	 marker.color.g = 0.0
 	 marker.color.b = 0.0
-	 # sum randumb orientation numberazz
-	 # TODO do calculations to get quaternion coords for orientation
-	 # q = quaternion_from_euler(yaw, pitch, roll=0)
-	 # in our coord system (XZ plane) its actually pitch, yaw, roll
-	 # test
-	 #(w,x,y,z) = quaternion_from_euler(math.pi/4,0.1,math.pi/4)
 	 pitch = math.atan2(v[1], math.sqrt(v[0]*v[0]+v[2]*v[2]))
 	 yaw = math.atan2(v[0],v[2])
 	 (w,x,y,z) = quaternion_from_euler(pitch,yaw,0)
@@ -264,7 +288,9 @@ def main(args):
       '/camera/depth/points'
       ]
    bag_filename = args[1]
-   VelEstimator3d(bag_filename, topics)
+   msg_range = (0,6)
+   VelEstimator3d(bag_filename, topics, msg_range)
+   rospy.spin()
    cv.DestroyAllWindows()
 
 if __name__ == '__main__':
