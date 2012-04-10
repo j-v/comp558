@@ -82,7 +82,8 @@ class VelEstimator3d:
 		  flowvels = []
 		  for i in xrange(flowX_smoothed.shape[0]):
 		     for j in xrange(flowY_smoothed.shape[1]):
-			flowpoints.append( (j*self.region_size, i*self.region_size) )
+			flowpoints.append( (j*self.region_size+region_size/2, \
+			      i*self.region_size+region_size/2) )
 			flowvels.append( (flowX_smoothed[i,j],flowY_smoothed[i,j]) )
 	          self.flow_logger.write(stamp,flowpoints,flowvels)
 
@@ -150,9 +151,6 @@ class VelEstimator3d:
       marker_array = MarkerArray()
 
       for i in xrange(len(p_arr)):
-	 # test: only take every 4 pts
-	 if i % 4 != 0: continue
-	 #debug_here()
 	 p = p_arr[i]
 	 v = vx,vy,vz = v_arr[i]
 	 marker = Marker()
@@ -163,28 +161,8 @@ class VelEstimator3d:
 	 marker.color.r = 1.0
 	 marker.color.g = 0.0
 	 marker.color.b = 0.0
-	 #roll =.0 
-	 ##pitch = math.atan2(vy, math.sqrt(vx*vx+vz*vz))
-	 #pitch =3 * math.pi/2 
-	 #yaw = math.atan2(vz,-vx)
-	 ##yaw = math.atan2(vz,vx) 
-	 #scale = math.sqrt(vx*vx + vy*vy + vz*vz) * v_scale # length of arrow
-	 ##test
-	 ##pitch, yaw, scale = 1.0, yaw, scale
-	 #marker.scale.x = 1.0
-	 #marker.scale.y = 1.0
-	 #marker.scale.z = scale 
-         #(w,x,y,z) = quaternion_from_euler(pitch,yaw,roll)
-	 ##(w,x,y,z) = quaternion_from_euler(roll,pitch,yaw)
-	 #marker.pose.orientation.x = x
-	 #marker.pose.orientation.y = y
-	 #marker.pose.orientation.z = z
-	 #marker.pose.orientation.w = w
-	 #marker.pose.position.x = p[0]
-	 #marker.pose.position.y = p[1]
-	 #marker.pose.position.z = p[2]
 	 marker.points.append(Point(p[0],p[1],p[2]))
-	 marker.points.append(Point(p[0]+vx*5,p[1]+vy*5,p[2]+vz*5))
+	 marker.points.append(Point(p[0]+vx,p[1]+vy,p[2]+vz)) 
 	 marker.scale.x=0.05
 	 marker.scale.y=0.1
 	 marker.id = i 
