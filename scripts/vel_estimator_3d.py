@@ -5,6 +5,7 @@ import rosbag
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image, PointCloud2
 from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Point
 import cv
 import math
 import sys
@@ -37,9 +38,9 @@ class VelEstimator3d:
       self.flow_2d_history = [] # smoothed
       self.vel_3d_history =[]
 
-      self.flow_logger = flowlogger.Flow2dLogger(self.log_filename + '.flow2d','w')
-      self.vel_logger = flowlogger.Vel3dLogger(self.log_filename + '.vel3d','w')
-      self.do_flow_estimate(msg_range)
+      #self.flow_logger = flowlogger.Flow2dLogger(self.log_filename + '.flow2d','w')
+      #self.vel_logger = flowlogger.Vel3dLogger(self.log_filename + '.vel3d','w')
+      #self.do_flow_estimate(msg_range)
       while raw_input("visualize data?").lower() == 'y':
          self.visualize_preprocessed(msg_range)
       
@@ -149,33 +150,68 @@ class VelEstimator3d:
       marker_array = MarkerArray()
 
       for i in xrange(len(p_arr)):
+	 # test: only take every 4 pts
+	 if i % 4 != 0: continue
 	 #debug_here()
 	 p = p_arr[i]
 	 v = vx,vy,vz = v_arr[i]
 	 marker = Marker()
-	 marker.header.frame_id = "/openni_depth_optical_frame"
+	 marker.header.frame_id = "/openni_rgb_optical_frame"
 	 marker.type = marker.ARROW
 	 marker.action = marker.ADD
-	 marker.scale.x = 1.0
-	 marker.scale.y = 1.0
-	 marker.scale.z = math.sqrt(vx*vx + vy*vy + vz*vz) * v_scale # z is length of arrow
 	 marker.color.a = 1.0
 	 marker.color.r = 1.0
 	 marker.color.g = 0.0
 	 marker.color.b = 0.0
-	 pitch = math.atan2(v[1], math.sqrt(v[0]*v[0]+v[2]*v[2]))
-	 yaw = math.atan2(v[0],v[2])
-	 (w,x,y,z) = quaternion_from_euler(pitch,yaw,0)
-	 marker.pose.orientation.x = x
-	 marker.pose.orientation.y = y
-	 marker.pose.orientation.z = z
-	 marker.pose.orientation.w = w
-	 marker.pose.position.x = p[0]
-	 marker.pose.position.y = p[1]
-	 marker.pose.position.z = p[2]
-	 marker.id = i
+	 #roll =.0 
+	 ##pitch = math.atan2(vy, math.sqrt(vx*vx+vz*vz))
+	 #pitch =3 * math.pi/2 
+	 #yaw = math.atan2(vz,-vx)
+	 ##yaw = math.atan2(vz,vx) 
+	 #scale = math.sqrt(vx*vx + vy*vy + vz*vz) * v_scale # length of arrow
+	 ##test
+	 ##pitch, yaw, scale = 1.0, yaw, scale
+	 #marker.scale.x = 1.0
+	 #marker.scale.y = 1.0
+	 #marker.scale.z = scale 
+         #(w,x,y,z) = quaternion_from_euler(pitch,yaw,roll)
+	 ##(w,x,y,z) = quaternion_from_euler(roll,pitch,yaw)
+	 #marker.pose.orientation.x = x
+	 #marker.pose.orientation.y = y
+	 #marker.pose.orientation.z = z
+	 #marker.pose.orientation.w = w
+	 #marker.pose.position.x = p[0]
+	 #marker.pose.position.y = p[1]
+	 #marker.pose.position.z = p[2]
+	 marker.points.append(Point(p[0],p[1],p[2]))
+	 marker.points.append(Point(p[0]+vx*5,p[1]+vy*5,p[2]+vz*5))
+	 marker.scale.x=0.05
+	 marker.scale.y=0.1
+	 marker.id = i 
 
 	 marker_array.markers.append(marker)
+
+	 # test: generate more markers that should in theory correspond to arrow heads
+         #marker = Marker()
+	 #marker.header.frame_id = "/openni_rgb_optical_frame"
+	 #marker.type = marker.SPHERE
+	 #marker.action = marker.ADD
+	 #marker.scale.x = 0.05
+	 #marker.scale.y = .05
+	 #marker.scale.z = 0.05 
+	 #marker.color.a = 1.0
+	 #marker.color.r = 0.0
+	 #marker.color.g = 1.0
+	 #marker.color.b = 0.0
+	 #roll = 0
+	 ##marker.pose.orientation.w = 1.0
+	 #marker.pose.position.x = p[0] + vx
+	 #marker.pose.position.y = p[1] + vy
+	 #marker.pose.position.z = p[2] + vz
+	 #marker.id = i + 100
+
+	 #marker_array.markers.append(marker)
+
       #debug_here()
       self.marker_pub.publish(marker_array)
 
