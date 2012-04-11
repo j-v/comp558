@@ -252,7 +252,7 @@ class VelEstimator3d:
 		  import pdb; pdb.set_trace()
 	    else:
 	       newp = points[cols*i+j]
-	       oldp = points[cols*iOld+jOld]
+	       oldp = last_points[cols*iOld+jOld]
 	       pixel_vels_3d[i,j] = newp[0]-oldp[0], newp[1]-oldp[1], newp[2]-oldp[2]
       elapsed = time()-stime
       print 'pixel-wise velocity estimate: ', elapsed, 'sec'

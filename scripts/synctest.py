@@ -17,6 +17,8 @@ import cv
 def receive_data(filename) :
    depth_topic = "/camera/depth/image"
    rgb_topic = "/camera/rgb/image_color"
+   #depth_topic = "/depth_image"
+   #rgb_topic = "/rgb_image"
 
    print "Reading data from %s" % filename
    print "RGB Image on topic: " + rgb_topic
