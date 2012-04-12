@@ -15,9 +15,7 @@ import numpy as np
 from IPython.Debugger import Tracer; debug_here = Tracer()
 from tf.transformations import quaternion_from_euler
 from time import time
-
-#TODO go through every block of code marked CORRECTION: review
-
+# TODO lingering markers
 '''
 THIS IS NOT REALTIME, AND ASSUMES A SPECIALLY PROCESSED BAG FILE
 First it reads the bag file, which consists of triples of depth, rgb, and pointcloud messages, frame by frame. It performs a 2d optical flow es
@@ -28,6 +26,8 @@ class VelEstimator3d:
       self.log_filename = log_filename
       if self.log_filename == None: self.log_filename = bag_filename
 
+	
+      self.max_features = 40
       self.topics = topics
       rospy.init_node('vel_3d')
       self.last_mono_image = None
@@ -52,8 +52,22 @@ class VelEstimator3d:
 
    """ THE MAIN METHOD """
    def do_flow_estimate(self, msg_range=None):
-      flowX = cv.CreateMat(480,640, cv.CV_32FC1)
-      flowY = cv.CreateMat(480,640, cv.CV_32FC1)
+      # initialize optical flow parameters
+      #flowX = cv.CreateMat(480,640, cv.CV_32FC1)
+      #flowY = cv.CreateMat(480,640, cv.CV_32FC1)
+      pyr1 = cv.CreateImage((480,640),cv.IPL_DEPTH_8U,1)
+      pyr2 = cv.CreateImage((480,640),cv.IPL_DEPTH_8U,1)    # pyramids required by the LK algo. Just space.
+      winSize = (3,3) # defines the patch of window that we'll look at
+      maxPyrUsed = 5 # defines the level of the pyramid
+      stoppingCriteria = ( cv.CV_TERMCRIT_ITER | cv.CV_TERMCRIT_EPS, 100,0.03) #stop after 20 iterations or epsilon is better than 0.3
+      dontPrecomputePyrForNextFrame = 1
+      self.max_features = 40
+      eig_image = cv.CreateImage((480,640),cv.IPL_DEPTH_32F,1)    # space required by the feature tracking
+      temp_image = cv.CreateImage((480,640),cv.IPL_DEPTH_32F,1)   # space required by the feature tracking
+      feature_quality_level = 0.01
+      feature_min_distance = 5
+
+      
       with rosbag.Bag(self.bag_filename) as bag:
 	 triple = []
 	 count = 0
@@ -76,36 +90,46 @@ class VelEstimator3d:
 		  print 'calculating optical flow'
 	          # 1. Do optical flow estimate, get flowX & flowY
 		  stime = time()
-		  cv.CalcOpticalFlowLK(self.last_mono_image, mono_image, self.flow_window_size,
-			flowX, flowY)
+		  # cv.CalcOpticalFlowLK(self.last_mono_image, mono_image, self.flow_window_size,
+		  #                       flowX, flowY)
+	          prevFrameFeatures = cv.GoodFeaturesToTrack(self.last_mono_image,
+			eig_image, temp_image, numbFeaturesToDetect, feature_quality_level, feature_min_distance)
+                  (currFrameFeatures,status,track_error) = cv.CalcOpticalFlowPyrLK( \
+			self.last_mono_image, mono_image,
+			pyr1, pyr2, prevFrameFeatures, winSize, maxPyrUsed,
+			stoppingCriteria,
+			dontPrecomputePyrForNextFrame)
+
 		  print 'optical flow calculation:', time()-stime, 'sec'
 
+		  # TODO obsolete code, we don't smooth on 2d optical flow w/ features.
+		  # TODO we could consider using the err vector for logging, training
 		  # 2. Smooth over optical flow (grid regions in 2D image), 
 		  # get flowX_smoothed & flowY_smoothed
-		  print 'smoothing 2d optical flow'
-		  flow_smoothed = (flowX_smoothed, flowY_smoothed) = self.smooth_flow(flowX, flowY, self.region_size)
-		  self.flow_2d_history.append( flow_smoothed )
-
+		  # print 'smoothing 2d optical flow'
+		  # flow_smoothed = (flowX_smoothed, flowY_smoothed) = self.smooth_flow(flowX, flowY, self.region_size)
+		  # self.flow_2d_history.append( flow_smoothed )
+		  
 		  # log smoothed 2d flow data
 		  flowpoints = []
 		  flowvels = []
-		  for i in xrange(flowX_smoothed.shape[0]):
-		     for j in xrange(flowY_smoothed.shape[1]):
-			flowpoints.append( (j*self.region_size+self.region_size/2, \
-			      i*self.region_size+self.region_size/2) )
-			flowvels.append( (flowX_smoothed[i,j],flowY_smoothed[i,j]) )
-	          self.flow_logger.write(stamp,flowpoints,flowvels)
+		  for i in xrange(numbFeaturesToDetect):
+		     if status[i] == 0: continue
+		     else:
+			px = prevFrameFeatures[i][0]
+			py = prevFrameFeatures[i][1]
+			qx = currFrameFeatures[i][0]
+			qy = currFrameFeatures[i][1]
+			flowpoints.append( (int(round(px)),int(round(py))) )
+			flowvels.append( ( qx-px , qy-py) )
+		  self.flow_logger.write(stamp, flowpoints, flowvels)
 
 		  # 3. Do 3d velocity estimate given the 2d estimates and pointcloud messages
 		  print 'estimating 3d velocities'
-		  pixel_vels = self.estimate_3d_vel(flowX, flowY, self.last_points_msg, points_msg)
-		  print 'smoothing 3d velocity estimate'
-		  # CORRECTION
-		  #vel_smoothed = points, velocities = self.smooth_3d_vel(pixel_vels, points_msg, self.region_size)
-		  vel_smoothed = points, velocities = self.smooth_3d_vel(pixel_vels, self.last_points_msg, self.region_size)
-		  self.vel_3d_history.append( vel_smoothed )
+		  # TODO
+		  points_3d, vels_3d = self.estimate_3d_vel(flowpoints, flowvels, self.last_points_msg, points_msg)
 		  # log 3d velocity data
-		  self.vel_logger.write(stamp,points,velocities)
+		  self.vel_logger.write(stamp, points_3d, vels_3d)
 
 		  total_elapsed = time()-total_start
 		  print 'Total processing:', total_elapsed, 'sec'
@@ -151,6 +175,7 @@ class VelEstimator3d:
 	       (t, points, vels) = vellog.read()
 	       # plot 3d velocity data
 	       self.plot_3d_vel(points, vels, 1.)
+
 	       # read 2d optical flow log
 	       (t, points, vels) = flowlog.read()
 	       # draw optical flow lines onto the image
@@ -184,11 +209,18 @@ class VelEstimator3d:
 	 marker.id = i 
 
 	 marker_array.markers.append(marker)
+      
+      for i in xrange(len(p_arr),self.max_features):
+	 marker = Marker()
+	 marker.action = marker.DELETE
+	 marker.id = i
+	 marker_array.markers.append(marker)
 
 
       self.marker_pub.publish(marker_array)
 
 
+   # TODO obsolete?
    def smooth_3d_vel(self, pixel_vels, pointcloud_message, region_size):
       rows, cols = pixel_vels.shape 
       stime = time()
@@ -223,8 +255,7 @@ class VelEstimator3d:
       return result_points, velocities
       
 
-   def estimate_3d_vel(self, flowX, flowY, last_points_msg, points_msg):
-      rows, cols = flowX.rows, flowX.cols
+   def estimate_3d_vel(self, points_2d, vels_2d, last_points_msg, points_msg):
       stime = time()
       last_points = [pt for pt in point_cloud.read_points(last_points_msg)]
       elapsed = time()-stime
@@ -234,47 +265,38 @@ class VelEstimator3d:
       points = [pt for pt in point_cloud.read_points(points_msg)]
       elapsed = time()-stime
       print 'point cloud iteration: ', elapsed, 'sec'
-
-      new_points = np.empty([rows,cols],dtype=('f4,f4,f4'))
-      pixel_vels_3d = np.empty([rows,cols],dtype=('f4,f4,f4'))
       
+      points_3d = []
+      vels_3d = []
       # get 3d velocity estimate at each pixel
       stime = time()
-      for i in xrange(rows):
-	 for j in xrange(cols):
-	    iDiff = int(round(flowX[i,j]))
-	    jDiff = int(round(flowY[i,j]))
+      for pt, vel in izip(points_2d, vels_2d):
+      #for i in xrange(rows):
+	 #for j in xrange(cols):
+	    px, py = pt
+	    vx, vy = vel
 
-	    iNew = i + iDiff
-	    jNew = j + jDiff
-	    #iOld = i - iDiff
-	    #jOld = j - jDiff
+	    p2x, p2y = int(round(px + vx)), int(round(py + vy))
 
 	    # handle out of bounds: set V at (i,j) to NaN 
 	    # TODO think of a better way?
-
 	    #if iOld<0 or iOld >=rows or jOld<0 or jOld>=cols:
 	    # CORRECTION
-	    if iNew<0 or iNew>=rows or jNew<0 or jNew>=cols:
-	       try:
-	          pixel_vels_3d[i,j] = (np.nan, np.nan, np.nan)
-	       except:
-		  import pdb; pdb.set_trace()
-	    else:
-	       # CORRECTION
-	       #newp = points[cols*i+j]
-	       #oldp = last_points[cols*iOld+jOld]
-	       newp = points[cols*iNew+jNew]
-	       oldp = last_points[cols*i+j]
-	       pixel_vels_3d[i,j] = newp[0]-oldp[0], newp[1]-oldp[1], newp[2]-oldp[2]
+	    if not (p2x<0 or p2x>=640 or p2y<0 or p2y>=480) :
+	       newp = points[640*p2y+p2x]
+	       oldp = last_points[640*py+px]
+
+	       points_3d.append( oldp )
+	       vels_3d.append(( newp[0]-oldp[0], newp[1]-oldp[1], newp[2]-oldp[2] ))
       elapsed = time()-stime
-      print 'pixel-wise velocity estimate: ', elapsed, 'sec'
+      print 'Feature-wise 3d velocity estimate: ', elapsed, 'sec'
 
 
-      return pixel_vels_3d
+      return points_3d, vels_3d
       
 
 
+   # TODO Obsolete code, we want a feature based version
    def smooth_flow(self, flowX, flowY, region_size):
       stime = time()
 

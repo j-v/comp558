@@ -46,12 +46,13 @@ for topic,msg,t in inbag.read_messages(topics=topics):
 # assume lists are sorted by msg.header.stamp
 
 # find best matches, write to bag
+last_matches = [None]*len(topics)-1
 with rosbag.Bag(out_filename, 'w') as outbag:
    for (syncmsg, synct) in msg_lists[sync_topic]:
       # write the message to sync to 
       outbag.write(sync_topic,syncmsg,synct)
       print 'wrote sync message (topic=%s)' % sync_topic
-      for topic in topics[1:]:
+      for t_index, topic in enumerate(topics[1:]):
 	 sync_stamp_nano = syncmsg.header.stamp.to_nsec()
 	 best_sync_diff = float("inf")
 	 best_match = None
@@ -61,9 +62,13 @@ with rosbag.Bag(out_filename, 'w') as outbag:
 	    if sync_diff<best_sync_diff:
 	       best_sync_diff = sync_diff
 	       best_match = (msg,t)
-	 # found best match, write it
+	 # found best match
 	 best_msg, best_t = best_match
-	 #outbag.write(topic,best_msg,best_t)
+	 # if we have duplicate matches, skip it
+	 if last_matches[t_index] == best_match: continue
+	 # save it
+	 last_matches[t_index] = best_match
+	 # write it to disk
 	 outbag.write(topic,best_msg,synct) # have to use synct for rosbag to preserve write order
 	 outbag.flush() # ??? not sure if its necessary
 	 print 'wrote message (topic=%s)' % topic
